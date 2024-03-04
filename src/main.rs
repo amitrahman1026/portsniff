@@ -1,11 +1,12 @@
-use std::env;
 use std::io::{self, Write};
-use std::net::{IpAddr, SocketAddr, TcpStream};
+use std::net::{IpAddr, SocketAddr};
 use std::process;
 use std::str::FromStr;
-use std::sync::mpsc::{self, Sender};
-use std::thread;
-use std::time::Duration;
+use std::{env, usize};
+use tokio::net::TcpStream;
+use tokio::sync::mpsc;
+use tokio::sync::mpsc::Sender;
+use tokio::time::{self, Duration};
 
 const MAX_PORT: u16 = 65535;
 
@@ -31,42 +32,51 @@ fn parse_arguments(args: &[String]) -> Result<Arguments, &'static str> {
     }
 }
 
-fn scan(tx: Sender<u16>, start_port: u16, addr: IpAddr, num_threads: u16) {
+async fn scan(tx: Sender<u16>, start_port: u16, addr: IpAddr, num_threads: u16) {
     let mut port = start_port;
-    // 1 Second timeout because I'm impatient
-    let timeout = Duration::new(1, 0);
+    let timeout = Duration::from_secs(5);
     loop {
         if MAX_PORT - port <= num_threads {
             break;
         }
         let socket = SocketAddr::new(addr, port);
-        if TcpStream::connect_timeout(&socket, timeout).is_ok() {
-            print!(".");
-            io::stdout().flush().unwrap();
-            tx.send(port).unwrap();
+        let result = time::timeout(timeout, TcpStream::connect(socket)).await;
+        if result.is_ok() {
+            if let Ok(_) = result.unwrap() {
+                print!(".");
+                io::stdout().flush().unwrap();
+                tx.send(port).await.unwrap();
+            }
         }
         port += num_threads;
     }
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let args: Vec<String> = env::args().collect();
     let arguments = parse_arguments(&args).unwrap_or_else(|err| {
         eprintln!("{}", err);
         process::exit(1);
     });
 
-    let (tx, rx) = mpsc::channel();
     let num_threads = arguments.threads;
+    let (tx, mut rx) = mpsc::channel(num_threads as usize);
 
     for i in 0..num_threads {
         let tx = tx.clone();
         let addr = arguments.ipaddr;
-        thread::spawn(move || scan(tx, i, addr, num_threads));
+        tokio::spawn(async move {
+            scan(tx, i, addr, num_threads).await;
+        });
     }
     // Drop the original sender to close the channel
     drop(tx);
-    let mut open_ports: Vec<u16> = rx.into_iter().collect();
+    let mut open_ports = Vec::new();
+    while let Some(port) = rx.recv().await {
+        open_ports.push(port);
+    }
+
     open_ports.sort();
 
     println!("");
