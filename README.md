@@ -55,6 +55,14 @@ Scan an IP address using 10 threads:
 cargo run -- -t 1000 127.0.0.1
 ```
 
+## Why Tokio Runtime?
+Previously, this project utilized OS threads for concurrency. However, as the
+need arose to spawn a large number of threads for efficient port scanning,
+switching to Tokio runtime became a more suitable choice. Tokio provides an
+asynchronous runtime and futures-based concurrency model, which enables
+efficient handling of thousands of concurrent tasks without the overhead of
+managing OS threads manually.
+
 ## Contributing
 
 As a learning project, contributions, suggestions, and feedback are welcome
